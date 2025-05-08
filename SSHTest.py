@@ -1,7 +1,9 @@
 import paramiko
-import stat
 import hashlib
 import os
+from pathlib import Path
+import stat
+import time
 
 hostname = "192.168.100.200"
 port = 22
@@ -9,10 +11,17 @@ username = "TENG"
 password = "raspberry"
 
 ruta_remota = "/var/opt/codesys/PlcLogic/FTP_Folder"
+current_path = str(Path("__file__").resolve().parent)
 
 # Create SSH client
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # Automatically add unknown hosts
+
+def shutdown():
+    stdin, stdout, stderr = ssh.exec_command("sudo poweroff")
+    
+def reboot():
+    stdin, stdout, stderr = ssh.exec_command("sudo reboot")
 
 def stop_codesys():
     
@@ -100,24 +109,48 @@ def upload_file(local_path, remote_path):
         print("Error when uploading the file")
         return False
         
-def download_file(remote_path, local_path):
-    
-    sftp.get(remote_path, local_path)
-    
-    # Check file integrity
-    if check_file_integrity(local_path, remote_path):
-        print("File Successfully downloaded")
-        return True
-    else:
-        print("Error when downloading the file")
-        return False
+def download_file(remote_path, local_path, max_retries = 5):
+    attempt = 0
+    while attempt < max_retries:
+        print(f'\nDownloading file: {remote_path}')
+        sftp.get(remote_path, local_path)
         
+        # Check file integrity
+        if check_file_integrity(local_path, remote_path):
+            print("File Successfully downloaded")
+            return
+        else:
+            print(f"Retrying in 1 second, attempt = {attempt}")
+            attempt += 1
+            time.sleep(1)
+
+    raise Exception("Error while trying to download a file")
+
+def download_folder(remote_path, local_path):
+    os.makedirs(local_path, exist_ok=True)  # Don't raise error if it exist
+            
+    for item in sftp.listdir_attr(remote_path):
+        
+        remote_item = remote_path + '/' + item.filename
+        local_item = os.path.join(local_path, item.filename)
+        
+        if stat.S_ISDIR(item.st_mode):
+            # If it is a folder, do recursive call
+            download_folder(sftp, remote_item, local_item)
+        else:
+            # If it is a file, download it
+            download_file(remote_item, local_item)
+
 def remove_file(remote_path):
     
-    stdin, stdout, stderr = ssh.exec_command(f"sudo rm '{remote_path}'")
+    stdin, stdout, stderr = ssh.exec_command(f"sudo rm -v '{remote_path}'")
     
     # Wait until command finishes
     stdout.channel.recv_exit_status()
+    
+    # Deleted file:
+    deleted_file = stdout.read().decode()
+    print("File to remove:", deleted_file)
     
     # Check command error
     error = stderr.read().decode()
@@ -125,6 +158,65 @@ def remove_file(remote_path):
         raise Exception(error)
     else:
         print("File successfully removed")
+        
+def remove_folder(remote_path):
+    
+    stdin, stdout, stderr = ssh.exec_command(f"sudo rm -rf -v '{remote_path}'")
+    
+    # Wait until command finishes
+    stdout.channel.recv_exit_status()
+    
+    # Deleted file:
+    deleted_items = stdout.read().decode()
+    print("Folder and files to remove:")
+    print(deleted_items)
+    
+    # Check command error
+    error = stderr.read().decode()
+    if error != '':
+        raise Exception(error)
+    else:
+        print("Files and folders successfully removed")
+        
+def remove_files_with_extension(remote_folder_path, extension = ".csv"):
+
+    stdin, stdout, stderr = ssh.exec_command(f"sudo find {remote_folder_path} -type f -name '*{extension}' -print -delete")
+
+    # Wait until command finishes
+    stdout.channel.recv_exit_status()
+
+    # Deleted files:
+    deleted_files = stdout.read().decode()
+    print("Files to remove:")
+    print(deleted_files)
+
+    # Check command error
+    error = stderr.read().decode()
+    if error != '':
+        raise Exception(error)
+    else:
+        if deleted_files:
+            print("Files successfully removed")
+        else:
+            print("There are no files to remove")
+            
+def get_elements(folder_path):
+    # Get elements from a path
+    list_elements = sftp.listdir(folder_path)
+    return list_elements
+
+def get_files(folder_path):
+    # Obtenir nomes fitxers, excloure les carpetes
+    entries = sftp.listdir_attr(ruta_remota)
+    path_files = [e.filename for e in entries if stat.S_ISREG(e.st_mode)]
+    return path_files
+
+def get_folders(folder_path):
+    # Obtenir nomes carpetes
+    entries = sftp.listdir_attr(ruta_remota)
+    path_folders = [e.filename for e in entries if stat.S_ISDIR(e.st_mode)]
+    return path_folders
+    
 
 try:
     # Connect to the host
@@ -133,21 +225,13 @@ try:
     # Iniciar sesión SFTP
     sftp = ssh.open_sftp()
     
-    # Get elements from a path
-    list_elements = sftp.listdir(ruta_remota)
-    # sftp.get(ruta_remota + "/" + list_elements[0], "datafile.csv")  # Descarregar fitxer al PC
-    
-    # Obtenir nomes fitxers, excloure les carpetes
-    entradas = sftp.listdir_attr(ruta_remota)
-    path_files = [e.filename for e in entradas if stat.S_ISREG(e.st_mode)]
-    
     # Reset Codesys
     stop_codesys()
     start_codesys()
 
     # Close the connection
-    ssh.close()
-    sftp.close()
+    # ssh.close()
+    # sftp.close()
 
 except paramiko.AuthenticationException:
     print("Authentication failed.")
