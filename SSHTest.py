@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import stat
 import time
+import tkinter as tk
+from tkinter import filedialog
 
 hostname = "192.168.100.200"
 port = 22
@@ -126,7 +128,28 @@ def download_file(remote_path, local_path, max_retries = 5):
 
     raise Exception("Error while trying to download a file")
 
-def download_folder(remote_path, local_path):
+def download_folder(remote_path, local_path=None):
+    
+    if local_path == None:
+        # Get file save location from user:
+        print("Please provide a save location for incoming data.")
+        root = tk.Tk()
+        root.withdraw()  # Amaga la finestra princial de tkinter
+        root.lift()   # Posa la finestra emergent en primer pla
+        root.attributes('-topmost', True)  # La finestra sempre al davant
+
+        local_path = filedialog.askdirectory()
+
+        if local_path:
+            local_path = local_path.replace("/", "\\")
+        else:
+            print("Canceled")
+            return
+        
+    else:
+        current_path = str(Path("__file__").resolve().parent)
+        local_path = os.path.join(current_path, local_path)
+
     os.makedirs(local_path, exist_ok=True)  # Don't raise error if it exist
             
     for item in sftp.listdir_attr(remote_path):
@@ -140,6 +163,9 @@ def download_folder(remote_path, local_path):
         else:
             # If it is a file, download it
             download_file(remote_item, local_item)
+
+    print("\nFolder successfully downloaded into the path: ", local_path)
+    return local_path
 
 def remove_file(remote_path):
     
