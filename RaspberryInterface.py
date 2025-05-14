@@ -61,7 +61,10 @@ class RaspberryInterface:
             raise Exception(error)
         else:
             print("codesyscontrol started")
-        
+            
+    def reset_codesys(self):
+        self.stop_codesys()
+        self.start_codesys()
         
     def check_file_integrity(self, local_path, remote_path):
         
